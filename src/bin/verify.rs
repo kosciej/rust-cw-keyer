@@ -1,8 +1,9 @@
-use std::env;
-use std::os::unix::io::AsRawFd;
-use std::{thread, time::Duration};
-
+#[cfg(unix)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use std::env;
+    use std::os::unix::io::AsRawFd;
+    use std::{thread, time::Duration};
+
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("Usage: verify-keyer <serial-port-path>");
@@ -50,4 +51,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 10ms polling is enough for visual verification
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[cfg(not(unix))]
+fn main() {
+    println!("The verify-keyer tool is currently only supported on Unix-like systems.");
 }

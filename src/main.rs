@@ -1,9 +1,6 @@
 use log::{debug, error, info, trace};
 use std::{thread, time::Duration};
 
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     debug!("Logger initialized.");
@@ -25,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- KEY DETECTION STRATEGY ---
     // On Linux: Use evdev to read from /dev/input directly (Wayland/X11 compatible)
-    // On macOS/Windows: Keep using device_query for convenience
+    // On macOS/Windows: Use device_query
 
     #[cfg(target_os = "linux")]
     {
@@ -33,7 +30,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut devices = evdev::enumerate().collect::<Vec<_>>();
         devices.sort_by(|a, b| a.1.name().unwrap_or("").cmp(b.1.name().unwrap_or("")));
         
-        // Find the keyboard (heuristic: has 'Z', 'X', and 'Esc')
         let mut device = None;
         for (_, d) in devices {
             let keys = d.supported_keys();
@@ -43,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let mut device = device.ok_or("Could not find a suitable keyboard device in /dev/input/")?;
+        let mut device = device.ok_or("Could not find a suitable keyboard device in /dev/input/. Do you have permission?")?;
         device.set_nonblocking(true)?;
         info!("Linux Mode: Using evdev on device: {}", device.name().unwrap_or("Unknown"));
 
@@ -106,6 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    #[allow(unreachable_code)]
     Ok(())
 }
 
@@ -207,6 +204,7 @@ struct WindowsCwPort {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     let port_name = "COM8";
     debug!("Connecting to Windows serial port: {}...", port_name);
