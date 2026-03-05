@@ -7,11 +7,14 @@ use std::os::unix::io::AsRawFd;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+    debug!("Logger initialized.");
 
     let device_state = DeviceState::new();
 
     // 1. Initialize the virtual/physical port based on the OS
+    debug!("Setting up port...");
     let mut port = setup_port()?;
+    debug!("Port setup complete.");
 
     info!("-----------------------------------------");
     info!("CW Keyer Active!");
@@ -92,13 +95,16 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     use std::ffi::CStr;
     use std::os::unix::io::AsRawFd;
 
+    debug!("Opening posix_openpt...");
     // Open a master pseudoterminal
     let master_fd = posix_openpt(OFlag::O_RDWR | OFlag::O_NOCTTY)?;
-
+    
+    debug!("Granting and unlocking PTY...");
     // Grant access to the slave and unlock it
     grantpt(&master_fd)?;
     unlockpt(&master_fd)?;
 
+    debug!("Getting slave name via ptsname...");
     // Use libc to get the slave terminal name
     let slave_path = unsafe {
         let name_ptr = libc::ptsname(master_fd.as_raw_fd());
@@ -114,6 +120,7 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
         slave_path
     );
 
+    debug!("Opening slave side: {}...", slave_path);
     // Open the SLAVE side for ourselves to set modem bits
     use std::fs::OpenOptions;
     use std::os::unix::fs::OpenOptionsExt;
@@ -123,6 +130,7 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(&slave_path)?;
 
+    debug!("Slave opened successfully.");
     Ok(Box::new(UnixCwPort {
         _master_fd: master_fd,
         slave_fd: slave_file,
@@ -177,6 +185,7 @@ struct WindowsCwPort {
 #[cfg(windows)]
 fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     let port_name = "COM8";
+    debug!("Connecting to Windows serial port: {}...", port_name);
     let port = serialport::new(port_name, 9600).open()?;
     info!(
         "Windows Mode: Connected to {}. Radio should be on linked port.",
