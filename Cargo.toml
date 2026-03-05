@@ -3,6 +3,14 @@ name = "rust-cw-keyer"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "rust-cw-keyer"
+path = "src/main.rs"
+
+[[bin]]
+name = "verify-keyer"
+path = "src/bin/verify.rs"
+
 [dependencies]
 device_query = "2.1.0"
 
