@@ -1,21 +1,24 @@
 use device_query::{DeviceQuery, DeviceState, Keycode};
+use log::{debug, error, info};
 use std::{thread, time::Duration};
 
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     let device_state = DeviceState::new();
 
     // 1. Initialize the virtual/physical port based on the OS
     let mut port = setup_port()?;
 
-    println!("-----------------------------------------");
-    println!("CW Keyer Active!");
-    println!("Press 'Z' for DIT (RTS)");
-    println!("Press 'X' for DAH (CTS/DTR)");
-    println!("Press 'Esc' to exit.");
-    println!("-----------------------------------------");
+    info!("-----------------------------------------");
+    info!("CW Keyer Active!");
+    info!("Press 'Z' for DIT (RTS)");
+    info!("Press 'X' for DAH (CTS/DTR)");
+    info!("Press 'Esc' to exit.");
+    info!("-----------------------------------------");
 
     let mut dit_active = false;
     let mut dah_active = false;
@@ -25,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Check for Exit
         if keys.contains(&Keycode::Escape) {
-            println!("Exiting...");
+            info!("Exiting...");
             break;
         }
 
@@ -33,8 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let z_down = keys.contains(&Keycode::Z);
         if z_down != dit_active {
             dit_active = z_down;
-            println!(
-                "DEBUG: Key Z {}, setting RTS to {}",
+            debug!(
+                "Key Z {}, setting RTS to {}",
                 if dit_active { "DOWN" } else { "UP" },
                 dit_active
             );
@@ -45,8 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let x_down = keys.contains(&Keycode::X);
         if x_down != dah_active {
             dah_active = x_down;
-            println!(
-                "DEBUG: Key X {}, setting DTR to {}",
+            debug!(
+                "Key X {}, setting DTR to {}",
                 if dah_active { "DOWN" } else { "UP" },
                 dah_active
             );
@@ -102,8 +105,8 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
         CStr::from_ptr(name_ptr).to_string_lossy().into_owned()
     };
 
-    println!("Unix Mode: Virtual Serial Port created.");
-    println!(
+    info!("Unix Mode: Virtual Serial Port created.");
+    info!(
         "Connect your Radio App (e.g., fldigi, Thetis) to: {}",
         slave_path
     );
@@ -129,10 +132,15 @@ impl CwKeyerPort for UnixCwPort {
         use nix::libc::{TIOCMBIC, TIOCMBIS, TIOCM_RTS};
         let request = if active { TIOCMBIS } else { TIOCMBIC };
         let line = TIOCM_RTS;
+        debug!(
+            "ioctl(TIOCM_RTS) request={} active={}",
+            if active { "TIOCMBIS" } else { "TIOCMBIC" },
+            active
+        );
         let res = unsafe { libc::ioctl(self.slave_fd.as_raw_fd(), request as _, &line) };
         if res == -1 {
             let err = std::io::Error::last_os_error();
-            eprintln!("ERROR: ioctl(TIOCM_RTS) on slave failed: {}", err);
+            error!("ioctl(TIOCM_RTS) on slave failed: {}", err);
         }
         Ok(())
     }
@@ -141,10 +149,15 @@ impl CwKeyerPort for UnixCwPort {
         use nix::libc::{TIOCMBIC, TIOCMBIS, TIOCM_DTR};
         let request = if active { TIOCMBIS } else { TIOCMBIC };
         let line = TIOCM_DTR;
+        debug!(
+            "ioctl(TIOCM_DTR) request={} active={}",
+            if active { "TIOCMBIS" } else { "TIOCMBIC" },
+            active
+        );
         let res = unsafe { libc::ioctl(self.slave_fd.as_raw_fd(), request as _, &line) };
         if res == -1 {
             let err = std::io::Error::last_os_error();
-            eprintln!("ERROR: ioctl(TIOCM_DTR) on slave failed: {}", err);
+            error!("ioctl(TIOCM_DTR) on slave failed: {}", err);
         }
         Ok(())
     }
@@ -162,7 +175,7 @@ struct WindowsCwPort {
 fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     let port_name = "COM8";
     let port = serialport::new(port_name, 9600).open()?;
-    println!(
+    info!(
         "Windows Mode: Connected to {}. Radio should be on linked port.",
         port_name
     );
@@ -172,11 +185,13 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
 #[cfg(windows)]
 impl CwKeyerPort for WindowsCwPort {
     fn set_rts(&mut self, active: bool) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("Windows: set_rts({})", active);
         self.port.write_request_to_send(active)?;
         Ok(())
     }
 
     fn set_cts(&mut self, active: bool) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("Windows: set_cts({})", active);
         self.port.write_data_terminal_ready(active)?;
         Ok(())
     }
