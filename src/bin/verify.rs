@@ -1,7 +1,7 @@
 #[cfg(unix)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
-    use std::os::unix::io::AsRawFd;
+    use std::os::unix::io::{AsFd, AsRawFd};
     use std::{thread, time::Duration};
 
     let args: Vec<String> = env::args().collect();
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Open the serial port for reading (the slave side)
     let file = std::fs::File::open(port_path)?;
-    let fd = file.as_raw_fd();
+    let fd = file.as_fd();
 
     println!("-----------------------------------------");
     println!("Monitoring signals on: {}", port_path);
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut status: i32 = 0;
         // TIOCMGET: Get the status of modem bits
         unsafe {
-            libc::ioctl(fd, libc::TIOCMGET, &mut status);
+            libc::ioctl(fd.as_raw_fd(), libc::TIOCMGET, &mut status);
         }
 
         if status != last_status {

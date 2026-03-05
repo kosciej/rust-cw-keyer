@@ -129,7 +129,7 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     use nix::fcntl::OFlag;
     use nix::pty::{grantpt, posix_openpt, unlockpt};
     use std::ffi::CStr;
-    use std::os::unix::io::AsRawFd;
+    use std::os::unix::io::{AsFd, AsRawFd};
 
     debug!("Opening posix_openpt...");
     let master_fd = posix_openpt(OFlag::O_RDWR | OFlag::O_NOCTTY)?;
@@ -170,10 +170,11 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
 impl CwKeyerPort for UnixCwPort {
     fn set_rts(&mut self, active: bool) -> Result<(), Box<dyn std::error::Error>> {
         use nix::libc::{TIOCMBIC, TIOCMBIS, TIOCM_RTS};
+        use std::os::unix::io::{AsFd, AsRawFd};
         let request = if active { TIOCMBIS } else { TIOCMBIC };
         let line = TIOCM_RTS;
         debug!("ioctl(TIOCM_RTS) request={} active={}", if active { "TIOCMBIS" } else { "TIOCMBIC" }, active);
-        let res = unsafe { libc::ioctl(self.slave_fd.as_raw_fd(), request as _, &line) };
+        let res = unsafe { libc::ioctl(self.slave_fd.as_fd().as_raw_fd(), request as _, &line) };
         if res == -1 {
             let err = std::io::Error::last_os_error();
             error!("ioctl(TIOCM_RTS) on slave failed: {}", err);
@@ -183,10 +184,11 @@ impl CwKeyerPort for UnixCwPort {
 
     fn set_cts(&mut self, active: bool) -> Result<(), Box<dyn std::error::Error>> {
         use nix::libc::{TIOCMBIC, TIOCMBIS, TIOCM_DTR};
+        use std::os::unix::io::{AsFd, AsRawFd};
         let request = if active { TIOCMBIS } else { TIOCMBIC };
         let line = TIOCM_DTR;
         debug!("ioctl(TIOCM_DTR) request={} active={}", if active { "TIOCMBIS" } else { "TIOCMBIC" }, active);
-        let res = unsafe { libc::ioctl(self.slave_fd.as_raw_fd(), request as _, &line) };
+        let res = unsafe { libc::ioctl(self.slave_fd.as_fd().as_raw_fd(), request as _, &line) };
         if res == -1 {
             let err = std::io::Error::last_os_error();
             error!("ioctl(TIOCM_DTR) on slave failed: {}", err);
