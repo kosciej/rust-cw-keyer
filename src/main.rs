@@ -1,4 +1,3 @@
-use device_query::{DeviceQuery, DeviceState, Keycode};
 use log::{debug, error, info, trace};
 use std::{thread, time::Duration};
 
@@ -8,8 +7,6 @@ use std::os::unix::io::AsRawFd;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     debug!("Logger initialized.");
-
-    let device_state = DeviceState::new();
 
     // 1. Initialize the virtual/physical port based on the OS
     debug!("Setting up port...");
@@ -26,45 +23,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dit_active = false;
     let mut dah_active = false;
 
-    loop {
-        let keys = device_state.get_keys();
-        if !keys.is_empty() {
-            trace!("Keys currently down: {:?}", keys);
+    // --- KEY DETECTION STRATEGY ---
+    // On Linux: Use evdev to read from /dev/input directly (Wayland/X11 compatible)
+    // On macOS/Windows: Keep using device_query for convenience
+
+    #[cfg(target_os = "linux")]
+    {
+        use evdev::{Device, Key};
+        let mut devices = evdev::enumerate().collect::<Vec<_>>();
+        devices.sort_by(|a, b| a.1.name().unwrap_or("").cmp(b.1.name().unwrap_or("")));
+        
+        // Find the keyboard (heuristic: has 'Z', 'X', and 'Esc')
+        let mut device = None;
+        for (_, d) in devices {
+            let keys = d.supported_keys();
+            if keys.contains(Key::KEY_Z) && keys.contains(Key::KEY_X) && keys.contains(Key::KEY_ESC) {
+                device = Some(d);
+                break;
+            }
         }
 
-        // Check for Exit
-        if keys.contains(&Keycode::Escape) {
-            info!("Exiting...");
-            break;
-        }
+        let mut device = device.ok_or("Could not find a suitable keyboard device in /dev/input/")?;
+        device.set_nonblocking(true)?;
+        info!("Linux Mode: Using evdev on device: {}", device.name().unwrap_or("Unknown"));
 
-        // Logic for DIT (Z key -> RTS)
-        let z_down = keys.contains(&Keycode::Z);
-        if z_down != dit_active {
-            dit_active = z_down;
-            debug!(
-                "Key Z {}, setting RTS to {}",
-                if dit_active { "DOWN" } else { "UP" },
-                dit_active
-            );
-            port.set_rts(dit_active)?;
+        loop {
+            for event in device.fetch_events()? {
+                if let evdev::InputEventKind::Key(key) = event.kind() {
+                    let is_down = event.value() != 0;
+                    match key {
+                        Key::KEY_ESC if is_down => {
+                            info!("Exiting...");
+                            return Ok(());
+                        }
+                        Key::KEY_Z if is_down != dit_active => {
+                            dit_active = is_down;
+                            debug!("Key Z {}, setting RTS to {}", if dit_active { "DOWN" } else { "UP" }, dit_active);
+                            port.set_rts(dit_active)?;
+                        }
+                        Key::KEY_X if is_down != dah_active => {
+                            dah_active = is_down;
+                            debug!("Key X {}, setting DTR to {}", if dah_active { "DOWN" } else { "UP" }, dah_active);
+                            port.set_cts(dah_active)?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(2));
         }
+    }
 
-        // Logic for DAH (X key -> CTS/DTR)
-        let x_down = keys.contains(&Keycode::X);
-        if x_down != dah_active {
-            dah_active = x_down;
-            debug!(
-                "Key X {}, setting DTR to {}",
-                if dah_active { "DOWN" } else { "UP" },
-                dah_active
-            );
-            port.set_cts(dah_active)?;
+    #[cfg(not(target_os = "linux"))]
+    {
+        use device_query::{DeviceQuery, DeviceState, Keycode};
+        let device_state = DeviceState::new();
+        loop {
+            let keys = device_state.get_keys();
+            if !keys.is_empty() {
+                trace!("Keys currently down: {:?}", keys);
+            }
+
+            if keys.contains(&Keycode::Escape) {
+                info!("Exiting...");
+                break;
+            }
+
+            let z_down = keys.contains(&Keycode::Z);
+            if z_down != dit_active {
+                dit_active = z_down;
+                debug!("Key Z {}, setting RTS to {}", if dit_active { "DOWN" } else { "UP" }, dit_active);
+                port.set_rts(dit_active)?;
+            }
+
+            let x_down = keys.contains(&Keycode::X);
+            if x_down != dah_active {
+                dah_active = x_down;
+                debug!("Key X {}, setting DTR to {}", if dah_active { "DOWN" } else { "UP" }, dah_active);
+                port.set_cts(dah_active)?;
+            }
+            thread::sleep(Duration::from_millis(2));
         }
-
-        // 2ms sleep provides ~500Hz polling rate (very low latency for CW)
-        // while keeping CPU usage near 0%.
-        thread::sleep(Duration::from_millis(2));
     }
 
     Ok(())
@@ -96,16 +135,13 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     use std::os::unix::io::AsRawFd;
 
     debug!("Opening posix_openpt...");
-    // Open a master pseudoterminal
     let master_fd = posix_openpt(OFlag::O_RDWR | OFlag::O_NOCTTY)?;
     
     debug!("Granting and unlocking PTY...");
-    // Grant access to the slave and unlock it
     grantpt(&master_fd)?;
     unlockpt(&master_fd)?;
 
     debug!("Getting slave name via ptsname...");
-    // Use libc to get the slave terminal name
     let slave_path = unsafe {
         let name_ptr = libc::ptsname(master_fd.as_raw_fd());
         if name_ptr.is_null() {
@@ -115,13 +151,9 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     };
 
     info!("Unix Mode: Virtual Serial Port created.");
-    info!(
-        "Connect your Radio App (e.g., fldigi, Thetis) to: {}",
-        slave_path
-    );
+    info!("Connect your Radio App (e.g., fldigi, Thetis) to: {}", slave_path);
 
     debug!("Opening slave side: {}...", slave_path);
-    // Open the SLAVE side for ourselves to set modem bits
     use std::fs::OpenOptions;
     use std::os::unix::fs::OpenOptionsExt;
     let slave_file = OpenOptions::new()
@@ -143,11 +175,7 @@ impl CwKeyerPort for UnixCwPort {
         use nix::libc::{TIOCMBIC, TIOCMBIS, TIOCM_RTS};
         let request = if active { TIOCMBIS } else { TIOCMBIC };
         let line = TIOCM_RTS;
-        debug!(
-            "ioctl(TIOCM_RTS) request={} active={}",
-            if active { "TIOCMBIS" } else { "TIOCMBIC" },
-            active
-        );
+        debug!("ioctl(TIOCM_RTS) request={} active={}", if active { "TIOCMBIS" } else { "TIOCMBIC" }, active);
         let res = unsafe { libc::ioctl(self.slave_fd.as_raw_fd(), request as _, &line) };
         if res == -1 {
             let err = std::io::Error::last_os_error();
@@ -160,11 +188,7 @@ impl CwKeyerPort for UnixCwPort {
         use nix::libc::{TIOCMBIC, TIOCMBIS, TIOCM_DTR};
         let request = if active { TIOCMBIS } else { TIOCMBIC };
         let line = TIOCM_DTR;
-        debug!(
-            "ioctl(TIOCM_DTR) request={} active={}",
-            if active { "TIOCMBIS" } else { "TIOCMBIC" },
-            active
-        );
+        debug!("ioctl(TIOCM_DTR) request={} active={}", if active { "TIOCMBIS" } else { "TIOCMBIC" }, active);
         let res = unsafe { libc::ioctl(self.slave_fd.as_raw_fd(), request as _, &line) };
         if res == -1 {
             let err = std::io::Error::last_os_error();
@@ -187,10 +211,7 @@ fn setup_port() -> Result<Box<dyn CwKeyerPort>, Box<dyn std::error::Error>> {
     let port_name = "COM8";
     debug!("Connecting to Windows serial port: {}...", port_name);
     let port = serialport::new(port_name, 9600).open()?;
-    info!(
-        "Windows Mode: Connected to {}. Radio should be on linked port.",
-        port_name
-    );
+    info!("Windows Mode: Connected to {}. Radio should be on linked port.", port_name);
     Ok(Box::new(WindowsCwPort { port }))
 }
 
