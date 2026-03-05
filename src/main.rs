@@ -1,5 +1,5 @@
 use device_query::{DeviceQuery, DeviceState, Keycode};
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 use std::{thread, time::Duration};
 
 #[cfg(unix)]
@@ -25,6 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let keys = device_state.get_keys();
+        if !keys.is_empty() {
+            trace!("Keys currently down: {:?}", keys);
+        }
 
         // Check for Exit
         if keys.contains(&Keycode::Escape) {
